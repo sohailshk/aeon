@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_almost_equal
 
+from aeon.distances import minkowski_distance, minkowski_pairwise_distance
 from aeon.distances import pairwise_distance as compute_pairwise_distance
 from aeon.distances._distance import (
     DISTANCES,
@@ -580,3 +581,32 @@ def test_pairwise_distance_n_jobs_equals_serial(dist, n_jobs):
         assert isinstance(parallel, np.ndarray)
         assert serial.shape == parallel.shape
         assert_almost_equal(serial, parallel)
+
+
+@pytest.mark.parametrize("n_channels", [1, 3])
+def test_minkowski_pairwise_weights(n_channels):
+    """Series-shaped weights must give the same result as minkowski_distance."""
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(4, n_channels, 5))
+    y = rng.normal(size=(3, n_channels, 5))
+    w = rng.random(size=(n_channels, 5))
+
+    expected_self = np.array(
+        [[minkowski_distance(a, b, p=2, w=w) for b in X] for a in X]
+    )
+    expected_xy = np.array([[minkowski_distance(a, b, p=2, w=w) for b in y] for a in X])
+
+    assert_almost_equal(minkowski_pairwise_distance(X, p=2, w=w), expected_self)
+    assert_almost_equal(minkowski_pairwise_distance(X, y, p=2, w=w), expected_xy)
+    assert_almost_equal(minkowski_pairwise_distance(y, X, p=2, w=w), expected_xy.T)
+
+
+def test_minkowski_pairwise_invalid_weights():
+    """Invalid weights must raise, not return a matrix of zeros."""
+    X = np.random.default_rng(0).normal(size=(3, 1, 5))
+    with pytest.raises(ValueError, match="same shape"):
+        minkowski_pairwise_distance(X, w=np.ones((3, 5)))  # one row per case
+    with pytest.raises(ValueError, match="same shape"):
+        minkowski_pairwise_distance(X, X, w=np.ones((3, 5)))
+    with pytest.raises(ValueError, match="non-negative"):
+        minkowski_pairwise_distance(X, w=-np.ones((1, 5)))

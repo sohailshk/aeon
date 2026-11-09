@@ -151,7 +151,8 @@ def minkowski_pairwise_distance(
         (default is 2.0, which represents the Euclidean distance).
     w : np.ndarray, default=None
         An array of weights, applied to each pairwise calculation.
-        The weights should match the shape of the time series in X and y.
+        The weights should match the shape of the time series in X and y, i.e.
+        ``(n_channels, n_timepoints)``, and be non-negative.
     n_jobs : int, default=1
         The number of jobs to run in parallel. If -1, then the number of jobs is set
         to the number of CPU cores. If 1, then the function is executed in a single
@@ -169,6 +170,7 @@ def minkowski_pairwise_distance(
         If X (and y if provided) are not 1D, 2D or 3D arrays.
         If p is less than 1.
         If w is provided and its shape does not match the instances in X and y.
+        If w is provided and contains negative values.
 
     Examples
     --------
@@ -189,10 +191,10 @@ def minkowski_pairwise_distance(
 
     >>> X = np.array([[1, 2, 3], [4, 5, 6]])
     >>> y = np.array([[11, 12, 13], [14, 15, 16]])
-    >>> w = np.array([[21, 22, 23], [24, 25, 26]])
+    >>> w = np.array([[21, 22, 23]])
     >>> minkowski_pairwise_distance(X, y, p=2, w=w)
     array([[ 81.24038405, 105.61249926],
-           [ 60.62177826,  86.60254038]])
+           [ 56.86826883,  81.24038405]])
 
     >>> X = np.array([[[1, 2, 3]],[[4, 5, 6]], [[7, 8, 9]]])
     >>> y_univariate = np.array([11, 12, 13])
@@ -211,10 +213,23 @@ def minkowski_pairwise_distance(
     multivariate_conversion = _is_numpy_list_multivariate(X, y)
     _X, _ = _convert_collection_to_numba_list(X, "X", multivariate_conversion)
     if y is None:
+        _check_pairwise_weights(w, _X)
         return _minkowski_pairwise_distance(_X, p, w)
 
     _y, _ = _convert_collection_to_numba_list(y, "y", multivariate_conversion)
+    _check_pairwise_weights(w, _X, _y)
     return _minkowski_from_multiple_to_multiple_distance(_X, _y, p, w)
+
+
+def _check_pairwise_weights(w, *collections):
+    # Numba does not propagate exceptions raised inside prange, so the weights are
+    # checked here rather than in minkowski_distance.
+    if w is None:
+        return
+    if any(s.shape != w.shape for c in collections for s in c):
+        raise ValueError("Weights w must have the same shape as each series")
+    if np.any(w < 0):
+        raise ValueError("Input weights should be all non-negative")
 
 
 @njit(cache=True, fastmath=True, parallel=True)
@@ -229,10 +244,7 @@ def _minkowski_pairwise_distance(
             if w is None:
                 distances[i, j] = minkowski_distance(X[i], X[j], p)
             else:
-                # Reshape weights to 2D for matching instance
-                # channels in distance calculation.
-                _w = w[i].reshape((1, w.shape[1]))
-                distances[i, j] = minkowski_distance(X[i], X[j], p, _w)
+                distances[i, j] = minkowski_distance(X[i], X[j], p, w)
             distances[j, i] = distances[i, j]
 
     return distances
@@ -254,7 +266,6 @@ def _minkowski_from_multiple_to_multiple_distance(
             if w is None:
                 distances[i, j] = minkowski_distance(x[i], y[j], p)
             else:
-                _w = w[i].reshape((1, w.shape[1]))
-                distances[i, j] = minkowski_distance(x[i], y[j], p, _w)
+                distances[i, j] = minkowski_distance(x[i], y[j], p, w)
 
     return distances
